@@ -2,7 +2,7 @@
 // LOG
 // ======================================================
 function log() {
-  var args = Array.prototype.slice.call(arguments);
+  const args = Array.prototype.slice.call(arguments);
   console.log.apply(console, ["🟦 [PLUGIN]"].concat(args));
 }
 
@@ -12,18 +12,21 @@ function log() {
 function loadAllFonts(node) {
   return new Promise(function (resolve) {
     try {
-      var fonts = node.getRangeAllFontNames(0, node.characters.length);
-      var i = 0;
+      const fonts = node.getRangeAllFontNames(0, node.characters.length);
+      let i = 0;
+
       (function next() {
         if (i >= fonts.length) return resolve();
         figma.loadFontAsync(fonts[i]).then(function () {
           i++;
           next();
+        }).catch(function () {
+          resolve();
         });
       })();
     } catch (err) {
       if (node.fontName && node.fontName !== figma.mixed) {
-        figma.loadFontAsync(node.fontName).then(resolve);
+        figma.loadFontAsync(node.fontName).then(resolve).catch(() => resolve());
       } else {
         resolve();
       }
@@ -32,14 +35,11 @@ function loadAllFonts(node) {
 }
 
 // ======================================================
-// Set text by name
+// Set text
 // ======================================================
 function setTextIfExists(parent, name, value) {
   return new Promise(function (resolve) {
-    var node = parent.findOne(function (n) {
-      return n.name === name && n.type === "TEXT";
-    });
-
+    const node = parent.findOne(n => n.name === name && n.type === "TEXT");
     if (!node) return resolve();
 
     loadAllFonts(node).then(function () {
@@ -54,39 +54,35 @@ function setTextIfExists(parent, name, value) {
 // ======================================================
 function setQrImage(frame, url, nodeName) {
   return new Promise(function (resolve) {
-    var qrNode = frame.findOne(function (n) {
-      return n.name === nodeName && n.fills !== undefined;
-    });
+    const qrNode = frame.findOne(n => n.name === nodeName && n.fills !== undefined);
     if (!qrNode) return resolve();
 
     fetch(url)
-      .then(function (res) {
-        if (!res.ok) return resolve();
-        return res.arrayBuffer();
-      })
-      .then(function (buf) {
-        var bytes = new Uint8Array(buf);
-        var img = figma.createImage(bytes);
+      .then(res => res.ok ? res.arrayBuffer() : null)
+      .then(buf => {
+        if (!buf) return resolve();
+        const img = figma.createImage(new Uint8Array(buf));
 
         qrNode.fills = [{
           type: "IMAGE",
           scaleMode: "FILL",
           imageHash: img.hash
         }];
+
         resolve();
       })
-      .catch(function () { resolve(); });
+      .catch(() => resolve());
   });
 }
 
 // ======================================================
-// Clean external_ref → number after #
+// Clean external_ref → number
 // ======================================================
 function sanitizeExternalRef(ref) {
   if (!ref) return "Panel";
-  var i = ref.indexOf("#");
+  const i = ref.indexOf("#");
   if (i === -1) return "Panel";
-  var num = ref.substring(i + 1).trim();
+  const num = ref.substring(i + 1).trim();
   return num === "" ? "Panel" : num;
 }
 
@@ -98,105 +94,156 @@ figma.showUI(__html__, { width: 340, height: 340 });
 // ======================================================
 // MAIN
 // ======================================================
-figma.ui.onmessage = function (msg) {
-
+figma.ui.onmessage = async function (msg) {
   if (msg.type === "close") {
     figma.closePlugin();
     return;
   }
-
   if (msg.type !== "generate") return;
 
-  var airport = msg.airport;
-  var targetPageName = msg.targetPage;
+  // ============================================
+  // Normalize airport (avoids "mrs" vs "MRS")
+  // ============================================
+  let airport = msg.airport;
+  airport = airport.trim().toUpperCase();
+
+  const targetPageName = msg.targetPage;
 
   if (!airport) {
     figma.notify("❌ Airport code is required");
     return;
   }
-
   if (!targetPageName) {
     figma.notify("❌ Target Page is required");
     return;
   }
 
-  var webhook = "https://" + airport + ".hubway.ai/api/webhooks/touchpoints";
+  // ============================================
+  // Source page selection
+  // ============================================
+  const sourcePageName =
+      airport === "MRS" ? "MRS_Prod" :
+      airport === "BVA" ? "BVA_Prod" :
+      null;
+
+  if (!sourcePageName) {
+    figma.notify("❌ Unknown airport: " + airport + " (supported: MRS, BVA)");
+    return;
+  }
+
+  const sourcePage = figma.root.findOne(n =>
+    n.type === "PAGE" && n.name === sourcePageName
+  );
+
+  if (!sourcePage) {
+    figma.notify("❌ Source page not found: " + sourcePageName);
+    return;
+  }
+
+  // ============================================
+  // Templates from source page
+  // ============================================
+  function find(name) {
+    return sourcePage.findOne(n => n.name === name && n.type === "FRAME");
+  }
+
+  const templateFemale = find("Template_Female");
+  const templateFemaleBack = find("Template_Female_Back");
+  const templateMale = find("Template_Male");
+  const templateMaleBack = find("Template_Male_Back");
+
+  const hasFemale = !!templateFemale && !!templateFemaleBack;
+  const hasMale   = !!templateMale && !!templateMaleBack;
+
+  if (!hasFemale && !hasMale) {
+    figma.notify("❌ No usable templates found in: " + sourcePageName);
+    return;
+  }
+
+  // ============================================
+  // Fetch webhook data
+  // ============================================
+  const webhook = "https://" + airport + ".hubway.ai/api/webhooks/touchpoints";
   log("Webhook:", webhook);
 
-  fetch(webhook)
-    .then(function (res) { return res.json(); })
-    .then(function (touchpoints) {
+  let touchpoints;
+  try {
+    const res = await fetch(webhook);
+    touchpoints = await res.json();
+  } catch (err) {
+    figma.notify("❌ Fetch error / CORS problem");
+    return;
+  }
 
-      if (!Array.isArray(touchpoints)) {
-        figma.notify("❌ Invalid webhook data");
-        return;
-      }
+  if (!Array.isArray(touchpoints)) {
+    figma.notify("❌ Invalid webhook data");
+    return;
+  }
 
-      // Target page
-      var page = figma.root.findOne(function (n) {
-        return n.type === "PAGE" && n.name === targetPageName;
-      });
-      if (!page) {
-        page = figma.createPage();
-        page.name = targetPageName;
-      }
+  // ============================================
+  // Target page (where we clone templates)
+  // ============================================
+  let page = figma.root.findOne(n =>
+    n.type === "PAGE" && n.name === targetPageName
+  );
+  if (!page) {
+    page = figma.createPage();
+    page.name = targetPageName;
+  }
 
-      var xRecto = 50;
-      var yOffset = 50;
-      var horizontalSpacing = 150;
-      var verticalSpacing = 400;
+  // ============================================
+  // Layout configuration
+  // ============================================
+  const startX = 120;
+  const startY = 120;
+  const spacingX = 260;
+  const verticalGap = 40;
+  const itemsPerRow = 6;
 
-      touchpoints.forEach(function (tp) {
+  // ============================================
+  // Generate
+  // ============================================
+  for (let i = 0; i < touchpoints.length; i++) {
 
-        var id = tp.public_id;
-        var qr = tp.qr_image_url + "?type=png";
-        var org = tp.org_name || "";
-        var ref = sanitizeExternalRef(tp.external_ref);
-        var name = ref + " — " + org + " — " + id;
+    const tp = touchpoints[i];
+    const id = tp.public_id;
+    const qr = tp.qr_image_url + "?type=png";
+    const org = tp.org_name || "";
+    const ref = sanitizeExternalRef(tp.external_ref);
+    const name = ref + " — " + org + " — " + id;
 
-        var gender = tp.avatar_genre === "male" ? "Male" : "Female";
+    const isMale = tp.avatar_genre === "male";
 
-        var rectoTemplate = figma.root.findOne(function (n) {
-          return n.name === (gender === "Male" ? "Template_Male" : "Template_Female");
-        });
+    const rectoTemplate = (isMale && hasMale) ? templateMale : templateFemale;
+    const versoTemplate = (isMale && hasMale) ? templateMaleBack : templateFemaleBack;
 
-        var versoTemplate = figma.root.findOne(function (n) {
-          return n.name === (gender === "Male" ? "Template_Male_Back" : "Template_Female_Back");
-        });
+    const col = i % itemsPerRow;
+    const row = Math.floor(i / itemsPerRow);
 
-        if (!rectoTemplate || !versoTemplate) return;
+    const x = startX + col * spacingX;
+    const rectoY = startY + row * 600;
+    const versoY = rectoY + rectoTemplate.height + verticalGap;
 
-        // RECTO
-        var recto = rectoTemplate.clone();
-        page.appendChild(recto);
-        recto.name = name;
-        recto.x = xRecto;
-        recto.y = yOffset;
+    // RECTO
+    const recto = rectoTemplate.clone();
+    page.appendChild(recto);
+    recto.x = x;
+    recto.y = rectoY;
+    recto.name = name;
 
-        setTextIfExists(recto, "ID_TEXT", id)
-          .then(function () { return setQrImage(recto, qr, "QR_IMAGE"); })
-          .then(function () {
+    await setTextIfExists(recto, "ID_TEXT", id);
+    await setQrImage(recto, qr, "QR_IMAGE");
 
-            var bounds = recto.absoluteRenderBounds;
-            var rectoWidth = bounds ? bounds.width : recto.width;
+    // VERSO
+    const verso = versoTemplate.clone();
+    page.appendChild(verso);
+    verso.x = x;
+    verso.y = versoY;
+    verso.name = name + " — Back";
 
-            // VERSO
-            var verso = versoTemplate.clone();
-            page.appendChild(verso);
-            verso.name = name + " — Back";
-            verso.x = recto.x + rectoWidth + horizontalSpacing;
-            verso.y = recto.y;
+    await setTextIfExists(verso, "ID_TEXT_V", id);
+    await setQrImage(verso, qr, "QR_IMAGE_V");
+  }
 
-            return setTextIfExists(verso, "ID_TEXT_V", id)
-              .then(function () { return setQrImage(verso, qr, "QR_IMAGE_V"); });
-          });
-
-        yOffset += verticalSpacing;
-      });
-
-      figma.notify("🎉 Panes generated!");
-    })
-    .catch(function () {
-      figma.notify("❌ Fetch failed — check CORS or domain access.");
-    });
+  figma.notify("🎉 Panels generated successfully!");
 };
