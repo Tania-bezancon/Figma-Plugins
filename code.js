@@ -7,7 +7,7 @@ function log() {
 }
 
 // ======================================================
-// Load all fonts for a text node
+// Load fonts
 // ======================================================
 function loadAllFonts(node) {
   return new Promise(function (resolve) {
@@ -43,9 +43,7 @@ function setTextIfExists(parent, name, value) {
     if (!node) return resolve();
 
     loadAllFonts(node).then(function () {
-      try {
-        node.characters = value;
-      } catch (err) {}
+      try { node.characters = value; } catch (err) {}
       resolve();
     });
   });
@@ -59,16 +57,15 @@ function setQrImage(frame, url, nodeName) {
     var qrNode = frame.findOne(function (n) {
       return n.name === nodeName && n.fills !== undefined;
     });
-
     if (!qrNode) return resolve();
 
     fetch(url)
-      .then(function (response) {
-        if (!response.ok) return resolve();
-        return response.arrayBuffer();
+      .then(function (res) {
+        if (!res.ok) return resolve();
+        return res.arrayBuffer();
       })
-      .then(function (buffer) {
-        var bytes = new Uint8Array(buffer);
+      .then(function (buf) {
+        var bytes = new Uint8Array(buf);
         var img = figma.createImage(bytes);
 
         qrNode.fills = [{
@@ -76,17 +73,14 @@ function setQrImage(frame, url, nodeName) {
           scaleMode: "FILL",
           imageHash: img.hash
         }];
-
         resolve();
       })
-      .catch(function () {
-        resolve();
-      });
+      .catch(function () { resolve(); });
   });
 }
 
 // ======================================================
-// Clean external_ref → extract number after "#"
+// Clean external_ref → number after #
 // ======================================================
 function sanitizeExternalRef(ref) {
   if (!ref) return "Panel";
@@ -105,6 +99,7 @@ figma.showUI(__html__, { width: 340, height: 340 });
 // MAIN
 // ======================================================
 figma.ui.onmessage = function (msg) {
+
   if (msg.type === "close") {
     figma.closePlugin();
     return;
@@ -112,100 +107,96 @@ figma.ui.onmessage = function (msg) {
 
   if (msg.type !== "generate") return;
 
-  var webhook = msg.webhook;
+  var airport = msg.airport;
   var targetPageName = msg.targetPage;
 
-  if (!webhook) {
-    figma.notify("❌ Webhook URL required");
+  if (!airport) {
+    figma.notify("❌ Airport code is required");
     return;
   }
 
   if (!targetPageName) {
-    figma.notify("❌ Target Page Name required");
+    figma.notify("❌ Target Page is required");
     return;
   }
+
+  var webhook = "https://" + airport + ".hubway.ai/api/webhooks/touchpoints";
+  log("Webhook:", webhook);
 
   fetch(webhook)
     .then(function (res) { return res.json(); })
     .then(function (touchpoints) {
 
       if (!Array.isArray(touchpoints)) {
-        figma.notify("❌ Invalid webhook response");
+        figma.notify("❌ Invalid webhook data");
         return;
       }
 
-      // Find or create target page
-      var targetPage = figma.root.findOne(function (n) {
+      // Target page
+      var page = figma.root.findOne(function (n) {
         return n.type === "PAGE" && n.name === targetPageName;
       });
-
-      if (!targetPage) {
-        targetPage = figma.createPage();
-        targetPage.name = targetPageName;
+      if (!page) {
+        page = figma.createPage();
+        page.name = targetPageName;
       }
 
       var xRecto = 50;
-      var xVersoOffset = 150;   // horizontal spacing
       var yOffset = 50;
-      var lineSpacing = 400;   // vertical spacing
+      var horizontalSpacing = 150;
+      var verticalSpacing = 400;
 
       touchpoints.forEach(function (tp) {
 
         var id = tp.public_id;
         var qr = tp.qr_image_url + "?type=png";
         var org = tp.org_name || "";
-        var gender = (tp.avatar_genre === "male") ? "Male" : "Female";
-        var refClean = sanitizeExternalRef(tp.external_ref);
+        var ref = sanitizeExternalRef(tp.external_ref);
+        var name = ref + " — " + org + " — " + id;
 
-        var name = refClean + " — " + org + " — " + id;
+        var gender = tp.avatar_genre === "male" ? "Male" : "Female";
 
-        // Global search for templates
         var rectoTemplate = figma.root.findOne(function (n) {
-          return n.name === (gender === "Male" ? "Template_Male" : "Template_Female") && n.type === "FRAME";
+          return n.name === (gender === "Male" ? "Template_Male" : "Template_Female");
         });
 
         var versoTemplate = figma.root.findOne(function (n) {
-          return n.name === (gender === "Male" ? "Template_Male_Back" : "Template_Female_Back") && n.type === "FRAME";
+          return n.name === (gender === "Male" ? "Template_Male_Back" : "Template_Female_Back");
         });
 
         if (!rectoTemplate || !versoTemplate) return;
 
-        // Clone RECTO
+        // RECTO
         var recto = rectoTemplate.clone();
-        targetPage.appendChild(recto);
+        page.appendChild(recto);
         recto.name = name;
         recto.x = xRecto;
         recto.y = yOffset;
 
-        // Apply ID + QR recto
         setTextIfExists(recto, "ID_TEXT", id)
           .then(function () { return setQrImage(recto, qr, "QR_IMAGE"); })
           .then(function () {
 
-            // Get recto width after render
             var bounds = recto.absoluteRenderBounds;
             var rectoWidth = bounds ? bounds.width : recto.width;
 
-            // Clone VERSO
+            // VERSO
             var verso = versoTemplate.clone();
-            targetPage.appendChild(verso);
+            page.appendChild(verso);
             verso.name = name + " — Back";
-
-            verso.x = recto.x + rectoWidth + xVersoOffset;
+            verso.x = recto.x + rectoWidth + horizontalSpacing;
             verso.y = recto.y;
 
             return setTextIfExists(verso, "ID_TEXT_V", id)
               .then(function () { return setQrImage(verso, qr, "QR_IMAGE_V"); });
           });
 
-        // Next line
-        yOffset += lineSpacing;
-
+        yOffset += verticalSpacing;
       });
 
-      figma.notify("🎉 Panels generated successfully!");
+      figma.notify("🎉 Panes generated!");
     })
     .catch(function () {
-      figma.notify("❌ Webhook fetch failed");
+      figma.notify("❌ Fetch failed — check CORS or domain access.");
     });
 };

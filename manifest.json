@@ -9,8 +9,10 @@
     "allowedDomains": [
       "https://hubway-mrs-web-dev.fly.dev",
       "https://hubway.ai",
+      "https://bva.hubway.ai",
       "https://mrs.hubway.ai",
-      "https://mrs.hubway.ai/api/webhooks/touchpoints"
+      "https://mrs.hubway.ai/api/webhooks/touchpoints",
+      "https://bva.hubway.ai/api/webhooks/touchpoints"
     ]
   }
 }

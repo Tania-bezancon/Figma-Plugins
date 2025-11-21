@@ -3,34 +3,103 @@
 <head>
   <meta charset="UTF-8" />
   <title>Touchpoint Generator</title>
+
   <style>
-    body {
-      font-family: system-ui, sans-serif;
-      margin: 12px;
-      font-size: 12px;
+    :root {
+      --violet: #7c3aed;
+      --violet-light: #a78bfa;
+      --violet-dark: #5b21b6;
+      --bg: #f7f5ff;
+      --text: #2d2d2d;
+      --radius: 10px;
     }
+
+    body {
+      margin: 0;
+      padding: 18px;
+      font-family: "Inter", system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      font-size: 13px;
+    }
+
+    h3 {
+      margin-top: 0;
+      margin-bottom: 14px;
+      font-size: 16px;
+      font-weight: 700;
+      color: var(--violet-dark);
+      text-align: center;
+    }
+
+    .card {
+      background: white;
+      padding: 16px;
+      border-radius: var(--radius);
+      box-shadow: 0 4px 14px rgba(124, 58, 237, 0.08);
+      border: 1px solid rgba(124, 58, 237, 0.15);
+    }
+
     label {
       display: block;
       margin-top: 10px;
       font-weight: 600;
+      color: var(--violet-dark);
+      font-size: 12px;
     }
-    input {
+
+    input,
+    select {
       width: 100%;
-      padding: 6px;
-      margin-top: 4px;
-      box-sizing: border-box;
-      font-size: 12px;
+      padding: 8px;
+      margin-top: 5px;
+      font-size: 13px;
+      border-radius: var(--radius);
+      border: 1px solid rgba(124, 58, 237, 0.35);
+      background: white;
+      transition: 0.2s;
+      outline: none;
     }
-    button {
-      margin-top: 15px;
-      padding: 8px 12px;
-      font-size: 12px;
-      cursor: pointer;
+
+    input:focus,
+    select:focus {
+      border-color: var(--violet);
+      box-shadow: 0 0 0 2px rgba(124, 58, 237, 0.25);
     }
+
     .buttons {
       display: flex;
       justify-content: flex-end;
-      gap: 8px;
+      gap: 10px;
+      margin-top: 18px;
+    }
+
+    button {
+      padding: 8px 16px;
+      border-radius: var(--radius);
+      font-size: 13px;
+      cursor: pointer;
+      border: none;
+      transition: 0.2s;
+      font-weight: 600;
+    }
+
+    button#close {
+      background: #e5e7eb;
+      color: #374151;
+    }
+
+    button#close:hover {
+      background: #d1d5db;
+    }
+
+    button#create {
+      background: var(--violet);
+      color: white;
+    }
+
+    button#create:hover {
+      background: var(--violet-dark);
     }
   </style>
 </head>
@@ -38,15 +107,20 @@
 <body>
   <h3>Touchpoint Panel Generator</h3>
 
-  <label for="webhook">Webhook URL</label>
-  <input id="webhook" type="text" placeholder="https://mrs.hubway.ai/api/webhooks/touchpoints" />
+  <div class="card">
+    <label for="airport">Airport</label>
+    <select id="airport">
+      <option value="mrs">MRS</option>
+      <option value="bva">BVA</option>
+    </select>
 
-  <label for="targetPage">Target Page Name</label>
-  <input id="targetPage" type="text" placeholder="ex: Generated Panels" />
+    <label for="targetPage">Target Page Name</label>
+    <input id="targetPage" type="text" placeholder="ex: Generated Panels" />
 
-  <div class="buttons">
-    <button id="close">Close</button>
-    <button id="create">Generate</button>
+    <div class="buttons">
+      <button id="close">Close</button>
+      <button id="create">Generate</button>
+    </div>
   </div>
 
   <script>
@@ -56,7 +130,7 @@
       parent.postMessage({
         pluginMessage: {
           type: "generate",
-          webhook: $("webhook").value.trim(),
+          airport: $("airport").value.trim().toLowerCase(),
           targetPage: $("targetPage").value.trim()
         }
       }, "*");
